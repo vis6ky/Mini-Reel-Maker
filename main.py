@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 def run_subprocess(cmd, description):
     """Run subprocess safely and log output."""
     try:
-        app.logger.info(f"Running {description}: {cmd}")
+        app.logger.info(f"Running {description}: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         app.logger.info(f"{description} succeeded:\nstdout: {result.stdout}\nstderr: {result.stderr}")
     except subprocess.CalledProcessError as e:
@@ -38,10 +38,14 @@ def make_video():
             )
 
             # 2️⃣ Generate video with ffmpeg and text overlay
+            # Escape single quotes in text for ffmpeg
+            safe_text = text.replace("'", r"\'")
+
             drawtext_filter = (
                 f"drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:"
-                f"text='{text}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2:escape=1"
+                f"text='{safe_text}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2"
             )
+
             ffmpeg_cmd = [
                 "ffmpeg",
                 "-f", "lavfi", "-i", "color=c=blue:s=720x1280:d=10",

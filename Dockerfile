@@ -1,14 +1,14 @@
-# Use slim Python image
-FROM python:3.13-slim
-
-# Install system packages
-RUN apt-get update && apt-get install -y \
-    espeak \
-    ffmpeg \
- && rm -rf /var/lib/apt/lists/*
+# Use Python 3.12 slim for better compatibility
+FROM python:3.12-slim
 
 # Set working directory
 WORKDIR /app
+
+# Install system packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    espeak \
+    ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
 
 # Copy Python dependencies
 COPY requirements.txt .
@@ -17,8 +17,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy app
 COPY . .
 
-# Expose Render port
+# Use PORT environment variable from Render
 ENV PORT 10000
 
-# Run app with gunicorn
+# Run app
 CMD ["gunicorn", "main:app", "-b", "0.0.0.0:10000"]

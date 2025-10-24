@@ -1,26 +1,23 @@
 # Use slim Python image
 FROM python:3.13-slim
 
-# Install system packages
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+# Install system packages, fonts, ffmpeg, espeak
+RUN apt-get update && apt-get install -y \
     espeak \
     ffmpeg \
     fonts-dejavu-core \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+    fonts-noto-color-emoji \
+    libfreetype6 \
+ && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
 # Copy Python dependencies
 COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Upgrade pip and install Python dependencies
-RUN python -m pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
+# Copy app
 COPY . .
 
 # Expose Render port

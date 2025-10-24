@@ -5,6 +5,7 @@ import os
 import logging
 import tempfile
 import shlex
+import traceback
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -69,12 +70,19 @@ def make_video():
     except subprocess.CalledProcessError as e:
         return jsonify({
             "error": "Subprocess failed",
-            "stdout": e.stdout,
-            "stderr": e.stderr
+            "command": e.cmd,
+            "returncode": e.returncode,
+            "stdout": e.stdout or "",
+            "stderr": e.stderr or ""
         }), 500
+
     except Exception as e:
-        app.logger.exception("Unexpected error")
-        return jsonify({"error": "Unexpected error", "details": str(e)}), 500
+        tb = traceback.format_exc()
+        return jsonify({
+            "error": "Unexpected error",
+            "details": str(e),
+            "traceback": tb
+        }), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)

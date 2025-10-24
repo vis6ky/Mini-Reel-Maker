@@ -4,9 +4,19 @@ from datetime import datetime
 import os
 import logging
 import tempfile
+import shlex
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
+
+def run_subprocess(cmd, description):
+    """Run subprocess safely and log output."""
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        app.logger.info(f"{description} succeeded:\nstdout: {result.stdout}\nstderr: {result.stderr}")
+    except subprocess.CalledProcessError as e:
+        app.logger.error(f"{description} failed:\nstdout: {e.stdout}\nstderr: {e.stderr}")
+        raise
 
 @app.route('/api/make-video', methods=['POST'])
 def make_video():
@@ -15,31 +25,34 @@ def make_video():
         text = data.get("text", "Default caption for reel")
         app.logger.info(f"Received text: {text}")
 
-        # Use temporary files to avoid collisions
+        # Use temporary files
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as audio_file, \
              tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as video_file:
 
             audio_path = audio_file.name
             video_path = video_file.name
 
-            # 1️⃣ Generate audio from text safely
-            subprocess.run(["espeak", text, "-w", audio_path], check=True)
-            app.logger.info(f"Audio generated: {audio_path}")
+            # 1️⃣ Generate audio from text (espeak)
+            safe_text = shlex.quote(text)  # Escape special characters for shell
+            run_subprocess(
+                f"espeak {safe_text} -w {audio_path}",
+                "espeak audio generation"
+            )
 
-            # 2️⃣ Generate video with text overlay safely
-            # Use single quotes inside drawtext to avoid issues with special characters
+            # 2️⃣ Generate video with text overlay (ffmpeg)
             drawtext_filter = f"drawtext=text='{text}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2:escape=1"
-            subprocess.run([
+            ffmpeg_cmd = [
                 "ffmpeg",
                 "-f", "lavfi", "-i", "color=c=blue:s=720x1280:d=10",
                 "-vf", drawtext_filter,
                 "-i", audio_path,
                 "-shortest",
-                "-c:v", "libx264", "-c:a", "aac",
+                "-c:v", "libx264",
+                "-c:a", "aac",
                 video_path,
                 "-y"
-            ], check=True)
-            app.logger.info(f"Video generated: {video_path}")
+            ]
+            run_subprocess(ffmpeg_cmd, "ffmpeg video generation")
 
             # 3️⃣ Upload video to transfer.sh
             upload_result = subprocess.check_output([
@@ -54,8 +67,11 @@ def make_video():
             return jsonify({"video_url": upload_result})
 
     except subprocess.CalledProcessError as e:
-        app.logger.error(f"Subprocess failed: {e}")
-        return jsonify({"error": "Subprocess failed", "details": str(e)}), 500
+        return jsonify({
+            "error": "Subprocess failed",
+            "stdout": e.stdout,
+            "stderr": e.stderr
+        }), 500
     except Exception as e:
         app.logger.exception("Unexpected error")
         return jsonify({"error": "Unexpected error", "details": str(e)}), 500

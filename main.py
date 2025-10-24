@@ -1,11 +1,8 @@
 from flask import Flask, request, jsonify
 import subprocess
-from datetime import datetime
+import tempfile
 import os
 import logging
-import tempfile
-import shlex
-import traceback
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -13,21 +10,14 @@ logging.basicConfig(level=logging.INFO)
 def run_subprocess(cmd, description):
     """Run subprocess safely and log output."""
     try:
+        app.logger.info(f"Running {description}: {cmd}")
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         app.logger.info(f"{description} succeeded:\nstdout: {result.stdout}\nstderr: {result.stderr}")
     except subprocess.CalledProcessError as e:
         app.logger.error(f"{description} failed:\nstdout: {e.stdout}\nstderr: {e.stderr}")
         raise
 
-@app.route("/")
-def index():
-    return {
-        "status": "ok",
-        "message": "Mini Reel Maker API is running",
-        "endpoints": ["/api/make-video"]
-    }        
-
-@app.route('/api/make-video', methods=['POST'])
+@app.route("/api/make-video", methods=["POST"])
 def make_video():
     try:
         data = request.get_json(force=True)
@@ -41,25 +31,24 @@ def make_video():
             audio_path = audio_file.name
             video_path = video_file.name
 
-            # 1️⃣ Generate audio from text (espeak)
-            safe_text = shlex.quote(text)  # Escape special characters for shell
+            # 1️⃣ Generate audio with espeak
             run_subprocess(
-                f"espeak {safe_text} -w {audio_path}",
+                ["espeak", text, "-w", audio_path],
                 "espeak audio generation"
             )
 
-            # 2️⃣ Generate video with text overlay (ffmpeg)
+            # 2️⃣ Generate video with ffmpeg and text overlay
             drawtext_filter = f"drawtext=text='{text}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2:escape=1"
             ffmpeg_cmd = [
                 "ffmpeg",
                 "-f", "lavfi", "-i", "color=c=blue:s=720x1280:d=10",
-                "-vf", drawtext_filter,
                 "-i", audio_path,
+                "-vf", drawtext_filter,
                 "-shortest",
                 "-c:v", "libx264",
                 "-c:a", "aac",
-                video_path,
-                "-y"
+                "-y",
+                video_path
             ]
             run_subprocess(ffmpeg_cmd, "ffmpeg video generation")
 
@@ -69,7 +58,7 @@ def make_video():
             ]).decode().strip()
             app.logger.info(f"Video uploaded: {upload_result}")
 
-            # Clean up
+            # Clean up temp files
             os.remove(audio_path)
             os.remove(video_path)
 
@@ -78,19 +67,14 @@ def make_video():
     except subprocess.CalledProcessError as e:
         return jsonify({
             "error": "Subprocess failed",
-            "command": e.cmd,
-            "returncode": e.returncode,
-            "stdout": e.stdout or "",
-            "stderr": e.stderr or ""
+            "stdout": e.stdout,
+            "stderr": e.stderr
         }), 500
-
     except Exception as e:
-        tb = traceback.format_exc()
-        return jsonify({
-            "error": "Unexpected error",
-            "details": str(e),
-            "traceback": tb
-        }), 500
+        app.logger.exception("Unexpected error")
+        return jsonify({"error": "Unexpected error", "details": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    # Use PORT from Render or default to 8080
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)

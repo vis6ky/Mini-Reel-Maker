@@ -1,12 +1,12 @@
 from flask import Flask, request, jsonify
 import subprocess
 from datetime import datetime
-import shlex
-import logging
 import os
+import logging
+import tempfile
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 @app.route('/api/make-video', methods=['POST'])
 def make_video():
@@ -15,51 +15,50 @@ def make_video():
         text = data.get("text", "Default caption for reel")
         app.logger.info(f"Received text: {text}")
 
-        # Escape text for ffmpeg drawtext
-        escaped_text = shlex.quote(text)
-        filename = f"reel_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
-        audio_file = "audio.wav"
+        # Use temporary files to avoid collisions
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as audio_file, \
+             tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as video_file:
 
-        # Generate audio from text
-        subprocess.run(["espeak", text, "-w", audio_file], check=True)
-        app.logger.info("Audio generated successfully.")
+            audio_path = audio_file.name
+            video_path = video_file.name
 
-        # Create video with colored background and text overlay
-        ffmpeg_cmd = [
-            "ffmpeg",
-            "-f", "lavfi", "-i", "color=c=blue:s=720x1280:d=10",
-            "-vf", f"drawtext=text={escaped_text}:fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2",
-            "-i", audio_file,
-            "-shortest",
-            "-c:v", "libx264", "-c:a", "aac",
-            filename,
-            "-y"
-        ]
-        subprocess.run(ffmpeg_cmd, check=True)
-        app.logger.info("Video generated successfully.")
+            # 1️⃣ Generate audio from text safely
+            subprocess.run(["espeak", text, "-w", audio_path], check=True)
+            app.logger.info(f"Audio generated: {audio_path}")
 
-        # Upload video to transfer.sh
-        upload_result = subprocess.check_output([
-            "curl",
-            "-F", f"file=@{filename}",
-            "https://transfer.sh/"
-        ]).decode().strip()
-        app.logger.info(f"Video uploaded successfully: {upload_result}")
+            # 2️⃣ Generate video with text overlay safely
+            # Use single quotes inside drawtext to avoid issues with special characters
+            drawtext_filter = f"drawtext=text='{text}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2:escape=1"
+            subprocess.run([
+                "ffmpeg",
+                "-f", "lavfi", "-i", "color=c=blue:s=720x1280:d=10",
+                "-vf", drawtext_filter,
+                "-i", audio_path,
+                "-shortest",
+                "-c:v", "libx264", "-c:a", "aac",
+                video_path,
+                "-y"
+            ], check=True)
+            app.logger.info(f"Video generated: {video_path}")
 
-        # Clean up local files
-        if os.path.exists(audio_file):
-            os.remove(audio_file)
-        if os.path.exists(filename):
-            os.remove(filename)
+            # 3️⃣ Upload video to transfer.sh
+            upload_result = subprocess.check_output([
+                "curl", "-s", "-F", f"file=@{video_path}", "https://transfer.sh/"
+            ]).decode().strip()
+            app.logger.info(f"Video uploaded: {upload_result}")
 
-        return jsonify({"video_url": upload_result})
+            # Clean up
+            os.remove(audio_path)
+            os.remove(video_path)
+
+            return jsonify({"video_url": upload_result})
 
     except subprocess.CalledProcessError as e:
-        app.logger.error(f"Subprocess error: {e}")
-        return jsonify({"error": str(e)}), 500
+        app.logger.error(f"Subprocess failed: {e}")
+        return jsonify({"error": "Subprocess failed", "details": str(e)}), 500
     except Exception as e:
-        app.logger.error(f"Unexpected error: {e}")
-        return jsonify({"error": str(e)}), 500
+        app.logger.exception("Unexpected error")
+        return jsonify({"error": "Unexpected error", "details": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
